@@ -13,6 +13,9 @@ const ProductSchema = new mongoose.Schema(
 
     // جديد: حالة التوفر
     inStock:     { type: Boolean, default: true },
+
+    // جديد: الحجم / الوزن
+    size:        { type: Number },
   },
   { timestamps: true }
 );

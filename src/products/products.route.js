@@ -153,24 +153,38 @@ router.patch(
         return res.status(404).send({ message: "المنتج غير موجود" });
       }
 
+      // تحويل القيم لتطابق منطق الإضافة
       const updateData = {
         name: req.body.name,
         category: req.body.category,
-        price: req.body.price,
-        oldPrice: req.body.oldPrice || null,
+        price: Number(req.body.price),
+        oldPrice:
+          req.body.oldPrice !== '' && req.body.oldPrice != null
+            ? Number(req.body.oldPrice)
+            : null,
         description: req.body.description,
-        size: req.body.size || null,
+        size: req.body.size ? Number(req.body.size) : null,
         author: req.body.author,
-        inStock: req.body.inStock === 'true',
-
       };
 
+      // inStock يُضبط فقط إذا أُرسل من الواجهة كنص 'true'/'false'
+      if (typeof req.body.inStock !== 'undefined') {
+        updateData.inStock = req.body.inStock === 'true';
+      }
+
+      // تحقق الحقول المطلوبة
       if (!updateData.name || !updateData.category || !updateData.price || !updateData.description) {
         return res.status(400).send({ message: "جميع الحقول المطلوبة يجب إرسالها" });
       }
+
+      // ملاحظة: هذا الشرط مطابق لمسار الإضافة
       if (updateData.category === "حناء بودر" && !updateData.size) {
         return res.status(400).send({ message: "يجب تحديد حجم الحناء" });
       }
+      // إذا أردت جعل الحجم إلزامي لكل المنتجات:
+      // if (!updateData.size) {
+      //   return res.status(400).send({ message: "يجب تحديد الحجم" });
+      // }
 
       // keepImages مُرسلة من الواجهة كنص JSON
       let keepImages = [];
@@ -195,7 +209,7 @@ router.patch(
       if (keepImages.length > 0 || newImageUrls.length > 0) {
         updateData.image = [...keepImages, ...newImageUrls];
       } else {
-        // لا نلمس الصور إن لم تصل keepImages ولم ترفع صور جديدة
+        // لا نلمس الصور إن لم تصل keepImages ولم تُرفع صور جديدة
         delete updateData.image;
       }
 
@@ -222,6 +236,7 @@ router.patch(
     }
   }
 );
+
 
 // حذف منتج
 router.delete("/:id", async (req, res) => {
