@@ -24,6 +24,7 @@ router.post("/uploadImages", async (req, res) => {
 });
 
 // إنشاء منتج
+// ========================= backend/routes/products.route.js (create-product) =========================
 router.post("/create-product", async (req, res) => {
   try {
     const {
@@ -35,28 +36,45 @@ router.post("/create-product", async (req, res) => {
       image,
       author,
       size,
-      inStock
+      inStock,
+      stock,           // جديد
     } = req.body;
 
-    if (!name || !category || !description || !price || !image || !author) {
+    if (!name || !category || !description || price == null || !image || !author) {
       return res.status(400).send({ message: "جميع الحقول المطلوبة يجب إرسالها" });
     }
     if (category === "حناء بودر" && !size) {
       return res.status(400).send({ message: "يجب تحديد حجم الحناء" });
     }
+    if (price < 0) {
+      return res.status(400).send({ message: "السعر غير صالح" });
+    }
+    if (oldPrice != null && oldPrice < 0) {
+      return res.status(400).send({ message: "السعر القديم غير صالح" });
+    }
+    if (stock != null && Number(stock) < 0) {
+      return res.status(400).send({ message: "الكمية (المخزون) غير صالحة" });
+    }
 
     const productData = {
-      name,
-      category,
-      description,
-      price,
-      oldPrice,
-      image,
+      name: String(name).trim(),
+      category: String(category).trim(),
+      description: String(description).trim(),
+      price: Number(price),
+      oldPrice: oldPrice != null ? Number(oldPrice) : undefined,
+      image: Array.isArray(image) ? image : [image],
       author,
-      size: size || null,
+      size: size ? Number(size) : null,
       // إن لم تُرسل القيمة يأتي افتراضياً من الـ Schema = true
-      inStock: typeof inStock === 'boolean' ? inStock : true
+      inStock: typeof inStock === 'boolean' ? inStock : true,
+      // جديد: حفظ الكمية
+      stock: stock != null ? Math.max(0, Math.floor(Number(stock))) : undefined,
     };
+
+    // تزامن بسيط: إذا stock=0 ولم يُرسل inStock، نجعلها false
+    if (productData.stock === 0 && inStock === undefined) {
+      productData.inStock = false;
+    }
 
     const newProduct = new Products(productData);
     const savedProduct = await newProduct.save();
@@ -139,11 +157,12 @@ const multer = require("multer");
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+// ========================= backend/routes/products.route.js (PATCH update-product) =========================
 router.patch(
   "/update-product/:id",
   verifyToken,
   verifyAdmin,
-  upload.array("image"), // استقبال عدة صور جديدة (Files)
+  upload.array("image"),
   async (req, res) => {
     try {
       const productId = req.params.id;
@@ -153,7 +172,6 @@ router.patch(
         return res.status(404).send({ message: "المنتج غير موجود" });
       }
 
-      // تحويل القيم لتطابق منطق الإضافة
       const updateData = {
         name: req.body.name,
         category: req.body.category,
@@ -167,24 +185,31 @@ router.patch(
         author: req.body.author,
       };
 
-      // inStock يُضبط فقط إذا أُرسل من الواجهة كنص 'true'/'false'
+      // inStock إن أرسلت كـ 'true'/'false'
       if (typeof req.body.inStock !== 'undefined') {
         updateData.inStock = req.body.inStock === 'true';
       }
 
-      // تحقق الحقول المطلوبة
-      if (!updateData.name || !updateData.category || !updateData.price || !updateData.description) {
+      // ✅ استلام وتحقق الكمية (المخزون)
+      if (typeof req.body.stock !== 'undefined' && req.body.stock !== '') {
+        const parsed = Math.max(0, Math.floor(Number(req.body.stock)));
+        if (Number.isNaN(parsed)) {
+          return res.status(400).send({ message: "قيمة الكمية (المخزون) غير صالحة" });
+        }
+        updateData.stock = parsed;
+        // في حال لم تُرسل inStock: اجعلها false إذا المخزون 0، وإلا لا تغيّرها
+        if (typeof req.body.inStock === 'undefined' && parsed === 0) {
+          updateData.inStock = false;
+        }
+      }
+
+      if (!updateData.name || !updateData.category || updateData.price == null || !updateData.description) {
         return res.status(400).send({ message: "جميع الحقول المطلوبة يجب إرسالها" });
       }
 
-      // ملاحظة: هذا الشرط مطابق لمسار الإضافة
       if (updateData.category === "حناء بودر" && !updateData.size) {
         return res.status(400).send({ message: "يجب تحديد حجم الحناء" });
       }
-      // إذا أردت جعل الحجم إلزامي لكل المنتجات:
-      // if (!updateData.size) {
-      //   return res.status(400).send({ message: "يجب تحديد الحجم" });
-      // }
 
       // keepImages مُرسلة من الواجهة كنص JSON
       let keepImages = [];
@@ -197,7 +222,7 @@ router.patch(
         }
       }
 
-      // رفع الصور الجديدة (إن وُجدت) من الـ buffer إلى Cloudinary
+      // رفع الصور الجديدة (إن وُجدت)
       let newImageUrls = [];
       if (Array.isArray(req.files) && req.files.length > 0) {
         newImageUrls = await Promise.all(
@@ -205,12 +230,9 @@ router.patch(
         );
       }
 
-      // إن كان هناك تعديل للصور، دمّج المُبقاة + الجديدة
+      // دمج الصور
       if (keepImages.length > 0 || newImageUrls.length > 0) {
         updateData.image = [...keepImages, ...newImageUrls];
-      } else {
-        // لا نلمس الصور إن لم تصل keepImages ولم تُرفع صور جديدة
-        delete updateData.image;
       }
 
       const updatedProduct = await Products.findByIdAndUpdate(
