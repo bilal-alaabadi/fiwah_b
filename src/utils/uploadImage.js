@@ -13,6 +13,11 @@ const opts = {
   invalidate: true,
   resource_type: "image",
   folder: "products",
+  // ✅ إضافة تحويل تلقائي f_auto, q_auto
+  transformation: {
+    quality: "auto",
+    fetch_format: "auto",
+  },
 };
 
 // يحدد هل النص Data URL صالح (ببادئة data:...;base64,)
@@ -49,7 +54,17 @@ async function uploadImages(images) {
 function uploadBufferToCloudinary(buffer, folder = "products") {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image", invalidate: true, overwrite: false },
+      {
+        folder,
+        resource_type: "image",
+        invalidate: true,
+        overwrite: false,
+        // ✅ إضافة f_auto, q_auto في الرفع عبر الستريم أيضاً
+        transformation: {
+          quality: "auto",
+          fetch_format: "auto",
+        },
+      },
       (error, result) => {
         if (error) return reject(error);
         return resolve(result.secure_url);

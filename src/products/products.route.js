@@ -261,22 +261,52 @@ router.patch(
 
 
 // حذف منتج
+// حذف منتج + حذف الصور من Cloudinary
 router.delete("/:id", async (req, res) => {
   try {
     const productId = req.params.id;
-    const deletedProduct = await Products.findByIdAndDelete(productId);
+    const product = await Products.findById(productId);
 
-    if (!deletedProduct) {
+    if (!product) {
       return res.status(404).send({ message: "Product not found" });
     }
 
+    // ============================
+    //  حذف الصور من Cloudinary
+    // ============================
+    if (Array.isArray(product.image)) {
+      for (const url of product.image) {
+        try {
+          // استخراج public_id من الرابط
+          // مثال: https://res.cloudinary.com/.../upload/v12345/products/abc123.jpg
+          const parts = url.split("/upload/");
+          if (parts.length > 1) {
+            const afterUpload = parts[1];
+            const withoutVersion = afterUpload.replace(/^v[0-9]+\//, "");
+            const publicIdWithExt = withoutVersion; // products/abc123.jpg
+            const publicId = publicIdWithExt.replace(/\.[^/.]+$/, ""); // حذف الامتداد
+            // حذف من Cloudinary
+            await cloudinary.uploader.destroy(publicId);
+          }
+        } catch (err) {
+          console.error("Cloudinary delete error:", err);
+        }
+      }
+    }
+
+    // حذف المنتج نفسه
+    await Products.findByIdAndDelete(productId);
+
+    // حذف التعليقات
     await Reviews.deleteMany({ productId });
+
     res.status(200).send({ message: "Product deleted successfully" });
   } catch (error) {
     console.error("Error deleting the product", error);
     res.status(500).send({ message: "Failed to delete the product" });
   }
 });
+
 
 // منتجات ذات صلة
 router.get("/related/:id", async (req, res) => {
