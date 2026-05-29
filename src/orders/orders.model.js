@@ -1,4 +1,4 @@
-// ========================= models/Order.js (نهائي - بدون تغيير) =========================
+// ========================= models/Order.js =========================
 const mongoose = require("mongoose");
 
 const GiftCardSchema = new mongoose.Schema(
@@ -20,9 +20,11 @@ const OrderSchema = new mongoose.Schema(
         productId: { type: String, required: true },
         quantity: { type: Number, required: true },
         name: { type: String, required: true },
-        price: { type: Number, required: true }, // سعر الوحدة بالعملة الأساسية (ر.ع.)
+        price: { type: Number, required: true },
         image: { type: String },
         category: { type: String },
+        size: { type: String, default: "" },
+
         measurements: {
           length: { type: String },
           sleeveLength: { type: String },
@@ -31,17 +33,18 @@ const OrderSchema = new mongoose.Schema(
           color: { type: String },
           buttons: { type: String },
         },
-        // ✅ بطاقة الهدية على مستوى كل منتج
+
         giftCard: { type: GiftCardSchema, default: undefined },
       },
     ],
 
-    amount: { type: Number, required: true }, // المبلغ المدفوع فعلياً (ر.ع.)
-    shippingFee: { type: Number, required: true, default: 2 }, // (ر.ع.)
+    amount: { type: Number, required: true },
+    shippingFee: { type: Number, required: true, default: 2 },
 
     customerName: { type: String, required: true },
     customerPhone: { type: String, required: true },
     country: { type: String, required: true },
+    gulfCountry: { type: String, default: "" },
     wilayat: { type: String, required: true },
     description: { type: String },
 
@@ -54,21 +57,24 @@ const OrderSchema = new mongoose.Schema(
       default: "pending",
     },
 
-    currency: { type: String, required: true, enum: ["OMR", "AED"], default: "OMR" },
+    currency: {
+      type: String,
+      required: true,
+      enum: ["OMR", "AED"],
+      default: "OMR",
+    },
 
-    // معلومات الدفع
     paymentSessionId: { type: String },
     paidAt: { type: Date },
 
-    // ==== حقول المقدم/المتبقي ====
     depositMode: { type: Boolean, default: false },
     remainingAmount: { type: Number, default: 0 },
 
-    // ==== بطاقة الهدية (على مستوى الطلب للتوافق) ====
     giftCard: { type: GiftCardSchema, default: undefined },
   },
   { timestamps: true }
 );
 
 const Order = mongoose.model("Order", OrderSchema);
+
 module.exports = Order;

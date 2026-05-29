@@ -54,6 +54,7 @@ const computeGulfShipping = (gulfCountry, totalItems) => {
   return base + blocks * 4;
 };
 
+// ========================= routes/orders.route.js =========================
 router.post("/create-checkout-session", async (req, res) => {
   const {
     products,
@@ -63,19 +64,22 @@ router.post("/create-checkout-session", async (req, res) => {
     country,
     wilayat,
     description,
-    depositMode, // إذا true: المقدم 10 ر.ع (من ضمنه التوصيل)
-    giftCard,    // { from, to, phone, note } اختياري (على مستوى الطلب)
-    gulfCountry, // الدولة المختارة داخل "دول الخليج" (إن وُجدت)
+    depositMode,
+    giftCard,
+    gulfCountry,
   } = req.body;
 
   if (!Array.isArray(products) || products.length === 0) {
-    return res.status(400).json({ error: "Invalid or empty products array" });
+    return res.status(400).json({
+      error: "Invalid or empty products array",
+    });
   }
 
-  // إجمالي عدد القطع
-  const totalItems = products.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
+  const totalItems = products.reduce(
+    (sum, p) => sum + Number(p.quantity || 0),
+    0
+  );
 
-  // رسوم الشحن (ر.ع.) وفق السياسة الجديدة لدول الخليج
   const shippingFee =
     country === "دول الخليج"
       ? computeGulfShipping(gulfCountry, totalItems)
@@ -88,11 +92,17 @@ router.post("/create-checkout-session", async (req, res) => {
       (sum, p) => sum + Number(p.price || 0) * Number(p.quantity || 0),
       0
     );
+
     const totalPairDiscount = products.reduce(
       (sum, p) => sum + pairDiscountForProduct(p),
       0
     );
-    const subtotalAfterDiscount = Math.max(0, productsSubtotal - totalPairDiscount);
+
+    const subtotalAfterDiscount = Math.max(
+      0,
+      productsSubtotal - totalPairDiscount
+    );
+
     const originalTotal = subtotalAfterDiscount + shippingFee;
 
     let lineItems = [];
@@ -100,23 +110,31 @@ router.post("/create-checkout-session", async (req, res) => {
 
     if (depositMode) {
       lineItems = [
-        { name: "دفعة مقدم", quantity: 1, unit_amount: toBaisa(DEPOSIT_AMOUNT_OMR) },
+        {
+          name: "دفعة مقدم",
+          quantity: 1,
+          unit_amount: toBaisa(DEPOSIT_AMOUNT_OMR),
+        },
       ];
+
       amountToCharge = DEPOSIT_AMOUNT_OMR;
     } else {
       lineItems = products.map((p) => {
         const unitBase = Number(p.price || 0);
         const qty = Math.max(1, Number(p.quantity || 1));
         const productDiscount = pairDiscountForProduct(p);
-        const unitAfterDiscount = Math.max(0.1, unitBase - productDiscount / qty);
+        const unitAfterDiscount = Math.max(
+          0.1,
+          unitBase - productDiscount / qty
+        );
+
         return {
-          name: String(p.name || "منتج"),
+          name: `${String(p.name || "منتج")}${p.size ? ` - ${p.size}` : ""}`,
           quantity: qty,
           unit_amount: toBaisa(unitAfterDiscount),
         };
       });
 
-      // بند الشحن النهائي (يشمل كتل 3/3)
       lineItems.push({
         name: "رسوم الشحن",
         quantity: 1,
@@ -130,6 +148,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const orderPayload = {
       orderId: nowId,
+
       products: products.map((p) => ({
         productId: p._id,
         quantity: p.quantity,
@@ -138,20 +157,29 @@ router.post("/create-checkout-session", async (req, res) => {
         image: Array.isArray(p.image) ? p.image[0] : p.image,
         measurements: p.measurements || {},
         category: p.category || "",
+        size: p.size || p.weight || "",
         giftCard: normalizeGift(p.giftCard) || undefined,
       })),
-      amountToCharge,
-      shippingFee,      // النهائي
+
+      amount: amountToCharge,
+      shippingFee,
+
       customerName,
       customerPhone,
       country,
-      gulfCountry: gulfCountry || "", // حفظها للكاش
+      gulfCountry: gulfCountry || "",
       wilayat,
       description,
       email: email || "",
+
       status: "completed",
+      currency: country === "دول الخليج" ? "AED" : "OMR",
+
       depositMode: !!depositMode,
-      remainingAmount: depositMode ? Math.max(0, originalTotal - DEPOSIT_AMOUNT_OMR) : 0,
+      remainingAmount: depositMode
+        ? Math.max(0, originalTotal - DEPOSIT_AMOUNT_OMR)
+        : 0,
+
       giftCard: normalizeGift(giftCard),
     };
 
@@ -161,32 +189,41 @@ router.post("/create-checkout-session", async (req, res) => {
       client_reference_id: nowId,
       mode: "payment",
       products: lineItems,
-      success_url: "https://www.fawahaljabal.com/SuccessRedirect?client_reference_id=" + nowId,
+      success_url:
+        "https://www.fawahaljabal.com/SuccessRedirect?client_reference_id=" +
+        nowId,
       cancel_url: "https://www.fawahaljabal.com/cancel",
+
       metadata: {
         email: String(email || "غير محدد"),
         customer_name: String(customerName || ""),
         customer_phone: String(customerPhone || ""),
         country: String(country || ""),
-        gulfCountry: String(gulfCountry || ""), // لاحتساب احتياطي لاحقًا
+        gulfCountry: String(gulfCountry || ""),
         wilayat: String(wilayat || ""),
         description: String(description || "لا يوجد وصف"),
-        shippingFee: String(shippingFee), // الشحن النهائي
+        shippingFee: String(shippingFee),
         internal_order_id: String(nowId),
         source: "mern-backend",
       },
     };
 
-    const response = await axios.post(`${THAWANI_API_URL}/checkout/session`, data, {
-      headers: {
-        "Content-Type": "application/json",
-        "thawani-api-key": THAWANI_API_KEY,
-      },
-    });
+    const response = await axios.post(
+      `${THAWANI_API_URL}/checkout/session`,
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "thawani-api-key": THAWANI_API_KEY,
+        },
+      }
+    );
 
     const sessionId = response?.data?.data?.session_id;
+
     if (!sessionId) {
       ORDER_CACHE.delete(nowId);
+
       return res.status(500).json({
         error: "No session_id returned from Thawani",
         details: response?.data,
@@ -194,9 +231,14 @@ router.post("/create-checkout-session", async (req, res) => {
     }
 
     const paymentLink = `https://checkout.thawani.om/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
-    res.json({ id: sessionId, paymentLink });
+
+    res.json({
+      id: sessionId,
+      paymentLink,
+    });
   } catch (error) {
     console.error("Error creating checkout session:", error?.response?.data || error);
+
     res.status(500).json({
       error: "Failed to create checkout session",
       details: error?.response?.data || error.message,

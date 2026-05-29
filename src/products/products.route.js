@@ -29,6 +29,7 @@ router.post("/create-product", async (req, res) => {
   try {
     const {
       name,
+      mainCategory,
       category,
       description,
       oldPrice,
@@ -37,41 +38,64 @@ router.post("/create-product", async (req, res) => {
       author,
       size,
       inStock,
-      stock,           // جديد
+      stock,
     } = req.body;
 
-    if (!name || !category || !description || price == null || !image || !author) {
-      return res.status(400).send({ message: "جميع الحقول المطلوبة يجب إرسالها" });
+    if (
+      !name ||
+      !mainCategory ||
+      !category ||
+      !description ||
+      price == null ||
+      !image ||
+      !author ||
+      !size
+    ) {
+      return res.status(400).send({
+        message: "جميع الحقول المطلوبة يجب إرسالها",
+      });
     }
-    if (category === "حناء بودر" && !size) {
-      return res.status(400).send({ message: "يجب تحديد حجم الحناء" });
+
+    const allowedMainCategories = [
+      "الزيوت العطرية",
+      "المياه العطرية",
+      "منتجات العناية الشخصية",
+    ];
+
+    if (!allowedMainCategories.includes(mainCategory)) {
+      return res.status(400).send({
+        message: "الفئة الأساسية غير صالحة",
+      });
     }
-    if (price < 0) {
+
+    if (Number(price) < 0) {
       return res.status(400).send({ message: "السعر غير صالح" });
     }
-    if (oldPrice != null && oldPrice < 0) {
+
+    if (oldPrice != null && Number(oldPrice) < 0) {
       return res.status(400).send({ message: "السعر القديم غير صالح" });
     }
+
     if (stock != null && Number(stock) < 0) {
-      return res.status(400).send({ message: "الكمية (المخزون) غير صالحة" });
+      return res.status(400).send({
+        message: "الكمية (المخزون) غير صالحة",
+      });
     }
 
     const productData = {
       name: String(name).trim(),
+      mainCategory: String(mainCategory).trim(),
       category: String(category).trim(),
       description: String(description).trim(),
       price: Number(price),
       oldPrice: oldPrice != null ? Number(oldPrice) : undefined,
       image: Array.isArray(image) ? image : [image],
       author,
-      size: size ? Number(size) : null,
-      // إن لم تُرسل القيمة يأتي افتراضياً من الـ Schema = true
-      inStock: typeof inStock === 'boolean' ? inStock : true,
-      // جديد: حفظ الكمية
+      size: String(size).trim(),
+      inStock: typeof inStock === "boolean" ? inStock : true,
       stock: stock != null ? Math.max(0, Math.floor(Number(stock))) : undefined,
     };
 
-    // تزامن بسيط: إذا stock=0 ولم يُرسل inStock، نجعلها false
     if (productData.stock === 0 && inStock === undefined) {
       productData.inStock = false;
     }
@@ -85,7 +109,6 @@ router.post("/create-product", async (req, res) => {
     res.status(500).send({ message: "Failed to create new product" });
   }
 });
-
 
 // جميع المنتجات
 router.get("/", async (req, res) => {
@@ -157,7 +180,7 @@ const multer = require("multer");
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ========================= backend/routes/products.route.js (PATCH update-product) =========================
+// ========================= PATCH UPDATE PRODUCT =========================
 router.patch(
   "/update-product/:id",
   verifyToken,
@@ -168,81 +191,132 @@ router.patch(
       const productId = req.params.id;
 
       const productExists = await Products.findById(productId);
+
       if (!productExists) {
-        return res.status(404).send({ message: "المنتج غير موجود" });
+        return res.status(404).send({
+          message: "المنتج غير موجود",
+        });
       }
 
       const updateData = {
         name: req.body.name,
+        mainCategory: req.body.mainCategory,
         category: req.body.category,
         price: Number(req.body.price),
         oldPrice:
-          req.body.oldPrice !== '' && req.body.oldPrice != null
+          req.body.oldPrice !== "" && req.body.oldPrice != null
             ? Number(req.body.oldPrice)
             : null,
         description: req.body.description,
-        size: req.body.size ? Number(req.body.size) : null,
+        size: req.body.size || "",
         author: req.body.author,
       };
 
-      // inStock إن أرسلت كـ 'true'/'false'
-      if (typeof req.body.inStock !== 'undefined') {
-        updateData.inStock = req.body.inStock === 'true';
+      // حالة التوفر
+      if (typeof req.body.inStock !== "undefined") {
+        updateData.inStock = req.body.inStock === "true";
       }
 
-      // ✅ استلام وتحقق الكمية (المخزون)
-      if (typeof req.body.stock !== 'undefined' && req.body.stock !== '') {
-        const parsed = Math.max(0, Math.floor(Number(req.body.stock)));
-        if (Number.isNaN(parsed)) {
-          return res.status(400).send({ message: "قيمة الكمية (المخزون) غير صالحة" });
+      // المخزون
+      if (
+        typeof req.body.stock !== "undefined" &&
+        req.body.stock !== ""
+      ) {
+        const parsedStock = Math.max(
+          0,
+          Math.floor(Number(req.body.stock))
+        );
+
+        if (Number.isNaN(parsedStock)) {
+          return res.status(400).send({
+            message: "قيمة المخزون غير صالحة",
+          });
         }
-        updateData.stock = parsed;
-        // في حال لم تُرسل inStock: اجعلها false إذا المخزون 0، وإلا لا تغيّرها
-        if (typeof req.body.inStock === 'undefined' && parsed === 0) {
+
+        updateData.stock = parsedStock;
+
+        // إذا المخزون صفر ولم تُرسل inStock
+        if (
+          typeof req.body.inStock === "undefined" &&
+          parsedStock === 0
+        ) {
           updateData.inStock = false;
         }
       }
 
-      if (!updateData.name || !updateData.category || updateData.price == null || !updateData.description) {
-        return res.status(400).send({ message: "جميع الحقول المطلوبة يجب إرسالها" });
+      // التحقق من الحقول المطلوبة
+      if (
+        !updateData.name ||
+        !updateData.mainCategory ||
+        !updateData.category ||
+        !updateData.size ||
+        !updateData.description ||
+        Number.isNaN(updateData.price)
+      ) {
+        return res.status(400).send({
+          message: "جميع الحقول المطلوبة يجب إرسالها",
+        });
       }
 
-      if (updateData.category === "حناء بودر" && !updateData.size) {
-        return res.status(400).send({ message: "يجب تحديد حجم الحناء" });
-      }
-
-      // keepImages مُرسلة من الواجهة كنص JSON
+      // الصور الحالية التي لم يتم حذفها
       let keepImages = [];
-      if (typeof req.body.keepImages === "string" && req.body.keepImages.trim() !== "") {
+
+      if (
+        typeof req.body.keepImages === "string" &&
+        req.body.keepImages.trim() !== ""
+      ) {
         try {
           const parsed = JSON.parse(req.body.keepImages);
-          if (Array.isArray(parsed)) keepImages = parsed;
-        } catch (_) {
+
+          if (Array.isArray(parsed)) {
+            keepImages = parsed;
+          }
+        } catch (err) {
           keepImages = [];
         }
       }
 
-      // رفع الصور الجديدة (إن وُجدت)
+      // رفع الصور الجديدة إلى Cloudinary
       let newImageUrls = [];
+
       if (Array.isArray(req.files) && req.files.length > 0) {
         newImageUrls = await Promise.all(
-          req.files.map((file) => uploadBufferToCloudinary(file.buffer, "products"))
+          req.files.map((file) =>
+            uploadBufferToCloudinary(
+              file.buffer,
+              "products"
+            )
+          )
         );
       }
 
-      // دمج الصور
-      if (keepImages.length > 0 || newImageUrls.length > 0) {
-        updateData.image = [...keepImages, ...newImageUrls];
+      // دمج الصور القديمة والجديدة
+      if (
+        keepImages.length > 0 ||
+        newImageUrls.length > 0
+      ) {
+        updateData.image = [
+          ...keepImages,
+          ...newImageUrls,
+        ];
       }
 
-      const updatedProduct = await Products.findByIdAndUpdate(
-        productId,
-        { $set: updateData },
-        { new: true, runValidators: true }
-      );
+      const updatedProduct =
+        await Products.findByIdAndUpdate(
+          productId,
+          {
+            $set: updateData,
+          },
+          {
+            new: true,
+            runValidators: true,
+          }
+        );
 
       if (!updatedProduct) {
-        return res.status(404).send({ message: "المنتج غير موجود" });
+        return res.status(404).send({
+          message: "المنتج غير موجود",
+        });
       }
 
       res.status(200).send({
@@ -250,7 +324,11 @@ router.patch(
         product: updatedProduct,
       });
     } catch (error) {
-      console.error("خطأ في تحديث المنتج", error);
+      console.error(
+        "خطأ أثناء تحديث المنتج:",
+        error
+      );
+
       res.status(500).send({
         message: "فشل تحديث المنتج",
         error: error.message,
@@ -258,7 +336,6 @@ router.patch(
     }
   }
 );
-
 
 // حذف منتج
 // حذف منتج + حذف الصور من Cloudinary
