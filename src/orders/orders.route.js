@@ -1,4 +1,4 @@
-// ========================= routes/orders.js (نهائي - شحن خليجي بالكتل + idempotency + تنزيل مخزون) =========================
+// ========================= routes/orders.js (نهائي - شحن خليجي بالكتل + idempotency + تنزيل مخزون + حفظ الحجم) =========================
 const express = require("express");
 const cors = require("cors");
 const Order = require("./orders.model");
@@ -11,7 +11,7 @@ require("dotenv").config();
 // ✅ استيراد موديل المنتجات لتنزيل المخزون
 const Product = require("../products/products.model");
 
-const THAWANI_API_KEY = process.env.THAWANI_API_KEY; 
+const THAWANI_API_KEY = process.env.THAWANI_API_KEY;
 const THAWANI_API_URL = process.env.THAWANI_API_URL;
 const THAWANI_PUBLISH_KEY = process.env.THAWANI_PUBLISH_KEY;
 
@@ -230,7 +230,7 @@ router.post("/create-checkout-session", async (req, res) => {
       });
     }
 
-    const paymentLink = `https://checkout.thawani.om/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
+    const paymentLink = `https://uatcheckout.thawani.om/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
 
     res.json({
       id: sessionId,
@@ -275,7 +275,7 @@ function calculateProductPrice(product, quantity, selectedSize) {
   return (product.regularPrice * quantity).toFixed(2);
 }
 
-// ========================= confirm-payment (نهائي - idempotency + تنزيل مخزون + شحن خليجي احتياطي) =========================
+// ========================= confirm-payment (نهائي - idempotency + تنزيل مخزون + شحن خليجي احتياطي + حفظ الحجم) =========================
 router.post("/confirm-payment", async (req, res) => {
   const { client_reference_id } = req.body;
 
@@ -288,6 +288,7 @@ router.post("/confirm-payment", async (req, res) => {
     const v = (x) => (x ?? "").toString().trim();
     return !!(v(gc.from) || v(gc.to) || v(gc.phone) || v(gc.note));
   };
+
   const normalizeGiftLocal = (gc) =>
     hasGiftValuesLocal(gc)
       ? { from: gc.from || "", to: gc.to || "", phone: gc.phone || "", note: gc.note || "" }
@@ -309,9 +310,11 @@ router.post("/confirm-payment", async (req, res) => {
     const sessionSummary = sessions.find(
       (s) => s.client_reference_id === client_reference_id
     );
+
     if (!sessionSummary) {
       return res.status(404).json({ error: "Session not found" });
     }
+
     const session_id = sessionSummary.session_id;
 
     // 2) تأكد من حالة الدفع
@@ -326,6 +329,7 @@ router.post("/confirm-payment", async (req, res) => {
     );
 
     const session = response?.data?.data;
+
     if (!session || session.payment_status !== "paid") {
       return res.status(400).json({ error: "Payment not successful or session not found" });
     }
@@ -333,7 +337,7 @@ router.post("/confirm-payment", async (req, res) => {
     // 3) ميتاداتا خفيفة
     const meta = session?.metadata || session?.meta_data || {};
     const metaCustomerName = meta.customer_name || "";
-    const  metaCustomerPhone = meta.customer_phone || "";
+    const metaCustomerPhone = meta.customer_phone || "";
     const metaEmail = meta.email || "";
     const metaCountry = meta.country || "";
     const metaGulfCountry = meta.gulfCountry || meta.gulf_country || "";
@@ -356,6 +360,7 @@ router.post("/confirm-payment", async (req, res) => {
           price: p.price,
           image: Array.isArray(p.image) ? p.image[0] : p.image,
           category: p.category || "",
+          size: p.size || p.weight || "",
           measurements: p.measurements || {},
           giftCard: normalizeGiftLocal(p.giftCard),
         }))
@@ -365,19 +370,24 @@ router.post("/confirm-payment", async (req, res) => {
     const resolvedShippingFee = (() => {
       if (typeof metaShippingFee !== "undefined") return metaShippingFee;
       if (typeof cached.shippingFee !== "undefined") return Number(cached.shippingFee);
+
       const country = (cached.country || metaCountry || "").trim();
       const gulf = (cached.gulfCountry || metaGulfCountry || "").trim();
+
       if (country === "دول الخليج") {
         const totalItems = Array.isArray(productsFromCache)
           ? productsFromCache.reduce((sum, it) => sum + Number(it.quantity || 0), 0)
           : 0;
+
         return computeGulfShipping(gulf, totalItems); // 👈 نفس الدالة (تزيد من الرابع)
       }
+
       return 2;
     })();
 
     if (!order) {
       const orderLevelGift = normalizeGiftLocal(cached.giftCard);
+
       order = new Order({
         orderId: cached.orderId || client_reference_id,
         products: productsFromCache,
@@ -386,10 +396,12 @@ router.post("/confirm-payment", async (req, res) => {
         customerName: cached.customerName || metaCustomerName,
         customerPhone: cached.customerPhone || metaCustomerPhone,
         country: cached.country || metaCountry,
+        gulfCountry: cached.gulfCountry || metaGulfCountry || "",
         wilayat: cached.wilayat || metaWilayat,
         description: cached.description || metaDescription,
         email: cached.email || metaEmail,
         status: "completed",
+        currency: cached.currency || (cached.country === "دول الخليج" ? "AED" : "OMR"),
         depositMode: !!cached.depositMode,
         remainingAmount: Number(cached.remainingAmount || 0),
         giftCard: orderLevelGift,
@@ -401,6 +413,7 @@ router.post("/confirm-payment", async (req, res) => {
       if (!order.customerName && metaCustomerName) order.customerName = metaCustomerName;
       if (!order.customerPhone && metaCustomerPhone) order.customerPhone = metaCustomerPhone;
       if (!order.country && metaCountry) order.country = metaCountry;
+      if (!order.gulfCountry && metaGulfCountry) order.gulfCountry = metaGulfCountry;
       if (!order.wilayat && metaWilayat) order.wilayat = metaWilayat;
       if (!order.description && metaDescription) order.description = metaDescription;
       if (!order.email && metaEmail) order.email = metaEmail;
@@ -436,9 +449,11 @@ router.post("/confirm-payment", async (req, res) => {
           await Promise.all(
             order.products.map((item) => {
               const qty = Number(item.quantity || 0);
+
               if (!item.productId || !Number.isFinite(qty) || qty <= 0) {
                 return Promise.resolve();
               }
+
               return Product.updateOne(
                 { _id: item.productId },
                 [
@@ -463,6 +478,7 @@ router.post("/confirm-payment", async (req, res) => {
     res.json({ order, alreadyProcessed });
   } catch (error) {
     console.error("Error confirming payment:", error?.response?.data || error);
+
     res.status(500).json({
       error: "Failed to confirm payment",
       details: error?.response?.data || error.message,
@@ -495,9 +511,11 @@ router.get("/:email", async (req, res) => {
 router.get("/order/:id", async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
+
     if (!order) {
       return res.status(404).send({ message: "Order not found" });
     }
+
     res.status(200).send(order);
   } catch (error) {
     console.error("Error fetching orders by user id", error);
@@ -507,7 +525,8 @@ router.get("/order/:id", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const orders = await Order.find({status:"completed"}).sort({ createdAt: -1 });
+    const orders = await Order.find({ status: "completed" }).sort({ createdAt: -1 });
+
     if (orders.length === 0) {
       return res.status(404).send({ message: "No orders found", orders: [] });
     }
@@ -522,6 +541,7 @@ router.get("/", async (req, res) => {
 router.patch("/update-order-status/:id", async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
+
   if (!status) {
     return res.status(400).send({ message: "Status is required" });
   }
@@ -559,9 +579,11 @@ router.delete('/delete-order/:id', async (req, res) => {
 
   try {
     const deletedOrder = await Order.findByIdAndDelete(id);
+
     if (!deletedOrder) {
       return res.status(404).send({ message: "Order not found" });
     }
+
     res.status(200).json({
       message: "Order deleted successfully",
       order: deletedOrder
